@@ -1,0 +1,329 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConfirmDesk Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f3f6fb;color:#17233d}
+header{background:#101b35;color:white;padding:20px 5%;display:flex;justify-content:space-between;align-items:center}
+.logo{font-size:23px;font-weight:bold}
+.logo span{color:#4d91ff}
+main{max-width:1100px;margin:35px auto;padding:0 18px}
+.panel{background:white;padding:25px;border-radius:14px;margin-bottom:20px;box-shadow:0 3px 15px #17233d0c}
+input,button{padding:12px;border-radius:7px;border:1px solid #d8deea;font-size:15px}
+input{width:100%;margin:7px 0 15px}
+button{background:#287bff;color:white;border:0;cursor:pointer;font-weight:bold}
+button:hover{background:#1764dc}
+.secondary{background:#101b35}
+.hidden{display:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:15px}
+.stat{background:#edf4ff;padding:18px;border-radius:10px}
+.stat strong{font-size:25px;display:block;margin-top:8px}
+table{width:100%;border-collapse:collapse;min-width:650px}
+th,td{text-align:left;padding:12px;border-bottom:1px solid #e8edf5;font-size:14px}
+.table-wrap{overflow-x:auto}
+small{color:#69758b}
+#message{margin:12px 0;color:#c0392b}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Confirm<span>Desk</span></div>
+  <button id="logout" class="hidden">Logout</button>
+</header>
+
+<main>
+<section id="login" class="panel">
+  <h2>Welcome to ConfirmDesk</h2>
+  <p>Sign in to your dashboard</p>
+  <label for="email">Email address</label>
+  <input id="email" type="email" placeholder="Enter your email">
+  <label for="password">Password</label>
+  <input id="password" type="password" placeholder="Enter your password">
+  <button id="loginBtn">Login</button>
+  <p id="message" role="status"></p>
+  <small>Access is available to approved Admin and Client accounts.</small>
+</section>
+
+<section id="dashboard" class="hidden">
+  <div class="panel">
+    <h2 id="welcome">Dashboard</h2>
+    <p id="accountInfo"></p>
+  </div>
+
+  <div class="grid">
+    <div class="stat">Total orders<strong id="total">0</strong></div>
+    <div class="stat">Confirmed<strong id="confirmed">0</strong></div>
+    <div class="stat">Cancelled<strong id="cancelled">0</strong></div>
+    <div class="stat">No response<strong id="noresponse">0</strong></div>
+  </div>
+
+  <section id="uploadPanel" class="panel hidden">
+    <h3>Upload COD orders</h3>
+    <p><small>CSV columns: order_reference, customer_name, customer_phone, customer_address, product_details, order_amount</small></p>
+    <label for="csvFile">Choose CSV file</label>
+    <input id="csvFile" type="file" accept=".csv">
+    <button id="uploadBtn">Upload orders</button>
+    <p id="uploadMessage" role="status"></p>
+  </section>
+
+  <section class="panel">
+    <h3>Order records</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Order ID</th><th>Customer</th><th>Phone</th>
+          <th>Amount</th><th>Status</th>
+        </tr></thead>
+        <tbody id="orders"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="clientsPanel" class="panel hidden">
+    <h3>Clients</h3>
+    <div class="table-wrap">
+      <table><thead><tr><th>Client ID</th><th>Business</th><th>Email</th><th>Status</th></tr></thead>
+      <tbody id="clients"></tbody></table>
+    </div>
+  </section>
+
+  <section id="paymentsPanel" class="panel hidden">
+    <h3>Payment records</h3>
+    <div class="table-wrap">
+      <table><thead><tr><th>Client ID</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+      <tbody id="payments"></tbody></table>
+    </div>
+  </section>
+</section>
+</main>
+
+<script>
+const SUPABASE_URL = "https://frfbwqufaajczdrpuhay.supabase.co/rest/v1/";
+const SUPABASE_KEY = "sb_publishable_pt4K_yl3XZu6iyYUyyEAxQ_ThfckgtE";
+
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = id => document.getElementById(id);
+let currentClient = null;
+
+function showMessage(message) {
+  $("message").textContent = message;
+}
+
+function showDashboard(show) {
+  $("login").classList.toggle("hidden", show);
+  $("dashboard").classList.toggle("hidden", !show);
+  $("logout").classList.toggle("hidden", !show);
+}
+
+function addCell(row, value) {
+  const cell = document.createElement("td");
+  cell.textContent = value ?? "";
+  row.appendChild(cell);
+}
+
+async function login() {
+  showMessage("");
+  const {error} = await db.auth.signInWithPassword({
+    email: $("email").value.trim(),
+    password: $("password").value
+  });
+  if(error) return showMessage(error.message);
+  await loadDashboard();
+}
+
+async function loadDashboard() {
+  const {data:{user}} = await db.auth.getUser();
+  if(!user) return showDashboard(false);
+
+  const {data:profile,error} = await db.from("profiles")
+    .select("full_name,role").eq("id",user.id).single();
+
+  if(error || !profile) {
+    showMessage("Your account profile could not be loaded. Contact Admin.");
+    await db.auth.signOut();
+    return;
+  }
+
+  if(!["admin","client"].includes(profile.role)) {
+    showMessage("Account access is not authorised.");
+    await db.auth.signOut();
+    return;
+  }
+
+  showDashboard(true);
+  $("welcome").textContent = profile.role === "admin"
+    ? "Admin Dashboard" : "Client Dashboard";
+  $("accountInfo").textContent = "Signed in as " + user.email;
+
+  const isAdmin = profile.role === "admin";
+  $("uploadPanel").classList.toggle("hidden", isAdmin);
+  $("clientsPanel").classList.toggle("hidden", !isAdmin);
+  $("paymentsPanel").classList.toggle("hidden", !isAdmin);
+
+  currentClient = null;
+  if(!isAdmin) {
+    const {data:client} = await db.from("clients")
+      .select("id,client_code,business_name")
+      .eq("user_id",user.id).single();
+
+    if(!client || !client.id) {
+      $("accountInfo").textContent += " — Client profile pending Admin approval.";
+      return;
+    }
+    currentClient = client;
+    $("accountInfo").textContent = client.business_name + " | " + client.client_code;
+  }
+
+  await loadOrders(isAdmin);
+  if(isAdmin) {
+    await loadClients();
+    await loadPayments();
+  }
+}
+
+async function loadOrders(isAdmin) {
+  let query = db.from("orders")
+    .select("id,order_reference,customer_name,customer_phone,order_amount,status")
+    .order("created_at",{ascending:false}).limit(500);
+
+  if(!isAdmin && currentClient) query = query.eq("client_id",currentClient.id);
+
+  const {data,error} = await query;
+  if(error) return alert("Could not load orders: " + error.message);
+
+  $("orders").replaceChildren();
+  const counts = {total:0,Confirmed:0,Cancelled:0,"No Response":0};
+
+  (data || []).forEach(order => {
+    counts.total++;
+    if(counts[order.status] !== undefined) counts[order.status]++;
+    const row = document.createElement("tr");
+    addCell(row,order.order_reference || order.id.slice(0,8));
+    addCell(row,order.customer_name);
+    addCell(row,order.customer_phone);
+    addCell(row,order.order_amount);
+    addCell(row,order.status);
+    $("orders").appendChild(row);
+  });
+
+  $("total").textContent = counts.total;
+  $("confirmed").textContent = counts.Confirmed;
+  $("cancelled").textContent = counts.Cancelled;
+  $("noresponse").textContent = counts["No Response"];
+}
+
+async function loadClients() {
+  const {data,error} = await db.from("clients")
+    .select("client_code,business_name,email,active")
+    .order("created_at",{ascending:false});
+  if(error) return;
+
+  $("clients").replaceChildren();
+  (data || []).forEach(client => {
+    const row = document.createElement("tr");
+    addCell(row,client.client_code);
+    addCell(row,client.business_name);
+    addCell(row,client.email);
+    addCell(row,client.active ? "Active" : "Inactive");
+    $("clients").appendChild(row);
+  });
+}
+
+async function loadPayments() {
+  const {data,error} = await db.from("payments")
+    .select("client_id,amount,payment_method,status");
+  if(error) return;
+
+  $("payments").replaceChildren();
+  (data || []).forEach(payment => {
+    const row = document.createElement("tr");
+    addCell(row,payment.client_id.slice(0,8));
+    addCell(row,payment.amount);
+    addCell(row,payment.payment_method);
+    addCell(row,payment.status);
+    $("payments").appendChild(row);
+  });
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  return lines.map(line => {
+    const cells = [];
+    let value = "", quoted = false;
+    for(let i=0;i<line.length;i++) {
+      const char = line[i];
+      if(char === '"' && line[i+1] === '"' && quoted) {
+        value += '"'; i++;
+      } else if(char === '"') {
+        quoted = !quoted;
+      } else if(char === ',' && !quoted) {
+        cells.push(value); value = "";
+      } else value += char;
+    }
+    cells.push(value);
+    return cells;
+  });
+}
+
+async function uploadCSV() {
+  $("uploadMessage").textContent = "";
+  if(!currentClient) return;
+  const file = $("csvFile").files[0];
+  if(!file) return $("uploadMessage").textContent = "Please choose a CSV file.";
+
+  const rows = parseCSV(await file.text());
+  const headers = rows.shift().map(h => h.trim().toLowerCase());
+  const required = ["order_reference","customer_name","customer_phone","customer_address","product_details","order_amount"];
+  if(!required.every(h => headers.includes(h))) {
+    return $("uploadMessage").textContent = "CSV headers do not match the required format.";
+  }
+
+  const records = rows.filter(row => row.some(v => v.trim() !== "")).map(row => {
+    const item = {};
+    headers.forEach((header,i) => item[header] = row[i]?.trim() || "");
+    return {
+      client_id:currentClient.id,
+      order_reference:item.order_reference,
+      customer_name:item.customer_name,
+      customer_phone:item.customer_phone,
+      customer_address:item.customer_address,
+      product_details:item.product_details,
+      order_amount:Number(item.order_amount)
+    };
+  });
+
+  if(!records.length || records.some(r => !Number.isFinite(r.order_amount))) {
+    return $("uploadMessage").textContent = "Check your CSV rows and order amounts.";
+  }
+
+  const {error} = await db.from("orders").insert(records);
+  if(error) return $("uploadMessage").textContent = error.message;
+
+  $("uploadMessage").textContent = records.length + " orders uploaded successfully.";
+  $("csvFile").value = "";
+  await loadOrders(false);
+}
+
+$("loginBtn").addEventListener("click",login);
+$("logout").addEventListener("click",async()=>{
+  await db.auth.signOut();
+  currentClient = null;
+  showDashboard(false);
+});
+$("uploadBtn").addEventListener("click",uploadCSV);
+
+(async()=>{
+  if(SUPABASE_URL.startsWith("https://") &&
+     SUPABASE_KEY !== "YOUR_PUBLISHABLE_KEY") {
+    const {data:{session}} = await db.auth.getSession();
+    if(session) await loadDashboard();
+  }
+})();
+</script>
+</body>
+</html>
