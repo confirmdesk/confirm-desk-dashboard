@@ -86,6 +86,26 @@ small{color:#69758b}
 
   <section id="clientsPanel" class="panel hidden">
     <h3>Clients</h3>
+    
+<div class="panel">
+  <h3>Add New Client</h3>
+
+  <label>Business Name</label>
+  <input id="newBusiness" type="text" placeholder="Enter business name">
+
+  <label>Contact Person</label>
+  <input id="newContact" type="text" placeholder="Enter contact person name">
+
+  <label>Client Email</label>
+  <input id="newEmail" type="email" placeholder="Enter client email">
+
+  <label>Phone Number</label>
+  <input id="newPhone" type="tel" placeholder="Enter phone number">
+
+  <button id="createClientBtn">Create Client Account</button>
+  <p id="createClientMessage" role="status"></p>
+</div>
+
     <div class="table-wrap">
       <table><thead><tr><th>Client ID</th><th>Business</th><th>Email</th><th>Status</th></tr></thead>
       <tbody id="clients"></tbody></table>
@@ -310,6 +330,74 @@ async function uploadCSV() {
 }
 
 $("loginBtn").addEventListener("click",login);
+  
+async function createClient() {
+  const message = $("createClientMessage");
+  message.textContent = "Creating client account...";
+
+  const business_name = $("newBusiness").value.trim();
+  const contact_name = $("newContact").value.trim();
+  const email = $("newEmail").value.trim();
+  const phone = $("newPhone").value.trim();
+
+  if (!business_name || !contact_name || !email) {
+    message.textContent = "Please enter business name, contact name and email.";
+    return;
+  }
+
+  const { data: { session } } = await db.auth.getSession();
+
+  if (!session) {
+    message.textContent = "Please log in again.";
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      "https://frfbwqufaajczdrpuhay.supabase.co/functions/v1/create-client",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPABASE_KEY,
+          "Authorization": "Bearer " + session.access_token
+        },
+        body: JSON.stringify({
+          business_name,
+          contact_name,
+          email,
+          phone
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      message.textContent = "Error: " + (result.error || "Could not create client.");
+      return;
+    }
+
+    message.textContent =
+      "Client created successfully! Client ID: " +
+      result.client.client_code +
+      " | Email: " + result.email +
+      " | Temporary password: " + result.temporary_password;
+
+    $("newBusiness").value = "";
+    $("newContact").value = "";
+    $("newEmail").value = "";
+    $("newPhone").value = "";
+
+    await loadClients();
+
+  } catch (error) {
+    message.textContent = "Connection error: " + error.message;
+  }
+}
+
+$("createClientBtn").addEventListener("click", createClient);
+
 $("logout").addEventListener("click",async()=>{
   await db.auth.signOut();
   currentClient = null;
